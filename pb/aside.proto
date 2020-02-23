@@ -1,0 +1,89 @@
+syntax = "proto2";
+
+package aside;
+
+// Define the api to use, expect more in the future.
+enum Proto {
+  // Used to transmit error.
+  NO_PROTO             = 0;
+  NO_PROTO_TRICKLE     = 1;
+  DATA_CHANNEL         = 2;
+  DATA_CHANNEL_TRICKLE = 3;
+  ORTC                 = 4;
+  ORTC_TRICKLE         = 5;
+}
+
+message Hello {
+  repeated Proto protos       = 1;
+  required bool shareStun     = 2;
+  required bool shareGoodStun = 3;
+  required bool needStun      = 4;
+  // Want stun explicitely ask for unkown status STUN.
+  required bool wantStun      = 5;
+  // Want good stun explicitely ask for good known STUN.
+  required bool wantGoodStun  = 6;
+}
+
+// Stun Server is a message used to be nested as list.
+message StunServer {
+  // Without `stun:`
+  required string domain  = 1;
+  required uint32 port    = 2; // Will be calculated with `x%(2^16)+1` to compensate for the lack of uint16 type in protobuf.
+  required bool knownGood = 3;
+}
+
+message StunShare {
+  repeated StunServer stunServers = 1;
+}
+
+// SDP exchange, assume offer if sended by the initiator and reverse.
+message SDP {
+  required string sdp = 1;
+}
+
+message GenerationEnded {}
+
+message AnswerTestingEnded {
+  required bool moreStun     = 1;
+  required bool moreGoodStun = 2;
+  required bool retry        = 3; // True if the initiator is willing to retry
+}
+
+message AcceptRetry {
+  required bool moreStun     = 1;
+  required bool moreGoodStun = 2;
+}
+
+// Except if closing with SUCCESS an implementation may terminate violently (not sending Terminate message).
+message Terminate {
+  enum Reason {
+    SUCCESS             = 100;
+    RAN_OUT_STUN_SERVER = 201;
+    RAN_OUT_OF_RETRIES  = 202;
+    PRIVATE_IP_STUN     = 203;
+    MALFORMED_MESSAGE   = 400;
+    UNKOWN_ERROR        = 401;
+  }
+}
+
+message WrapExchange {
+  oneof m {
+    Terminate terminate    = 1;
+    SDP sdp                = 2;
+    GenerationEnded genend = 3;
+  }
+}
+
+message WrapAnswerEnd {
+  oneof m {
+    Terminate terminate          = 1;
+    AnswerTestingEnded answerend = 2;
+  }
+}
+
+message WrapRetryAccept {
+  oneof m {
+    Terminate terminate = 1;
+    AcceptRetry retry   = 2;
+  }
+}
