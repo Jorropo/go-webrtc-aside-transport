@@ -3,6 +3,7 @@ package aside
 import (
 	"fmt"
 	"net"
+	"sync"
 
 	ma "github.com/multiformats/go-multiaddr"
 
@@ -11,14 +12,14 @@ import (
 
 type webRTCAsideListener struct {
 	// The transport releated to it.
-	t *WebRTCAsideTransport
+	t *webRTCAsideTransport
 	// acceptChan is a channel used to get the connection created by the handler to Accept().
 	connChan chan *webRTCAsideConn
 	// close is a channel used to know when to close.
-	close chan struct{}
+	close   chan struct{}
+	closeMU sync.Mutex
+	closed  bool
 }
-
-var ErrListenerClosing = fmt.Errorf("The listener is closing.")
 
 // Accept must not be called concurrently from multiple
 func (l *webRTCAsideListener) Accept() (tpt.CapableConn, error) {
@@ -26,15 +27,22 @@ func (l *webRTCAsideListener) Accept() (tpt.CapableConn, error) {
 	case c := <-l.connChan:
 		return c, nil
 	case <-l.close:
-		return nil, ErrListenerClosing
+		return nil, ErrListenerAlreadyClosed
 	}
 }
 
+var ErrListenerAlreadyClosed = fmt.Errorf("The listener is already closed.")
+
 func (l *webRTCAsideListener) Close() error {
-	close(l.close)
-	l.t.h.RemoveStreamHandler(ProtoID)
-	l.t.doListen.Reset()
-	return nil
+	l.closeMU.Lock()
+	defer l.closeMU.Unlock()
+	if !l.closed {
+		close(l.close)
+		l.t.h.RemoveStreamHandler(ProtoID)
+		l.t.doListen.Reset()
+		return nil
+	}
+	return ErrListenerAlreadyClosed
 }
 
 func (l *webRTCAsideListener) Addr() net.Addr {

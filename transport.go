@@ -1,7 +1,6 @@
 package aside
 
 import (
-	"context"
 	"fmt"
 
 	rs "github.com/matryer/resync"
@@ -9,45 +8,37 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	mafmt "github.com/multiformats/go-multiaddr-fmt"
 
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/protocol"
 	tpt "github.com/libp2p/go-libp2p-core/transport"
-	"github.com/libp2p/go-libp2p/p2p/host/routed"
 )
 
-var _ tpt.Transport = (*WebRTCAsideTransport)(nil)
+var _ tpt.Transport = (*webRTCAsideTransport)(nil)
 
 var ProtoID = protocol.ID("/libp2p/aside/0.0.1")
 
 var emptyWebRTCAsideMaddr, _ = ma.NewMultiaddr("/webrtc-aside")
 
-type WebRTCAsideTransport struct {
+type webRTCAsideTransport struct {
 	// The host is used for the aside protocol.
-	h *routedhost.RoutedHost
+	h host.Host
 
 	// doListen avoid multiple listen to be done.
 	doListen rs.Once
 }
 
-func (t *WebRTCAsideTransport) Dial(ctx context.Context, raddr ma.Multiaddr, p peer.ID) (tpt.CapableConn, error) {
-	if !t.CanDial(raddr) {
-		return nil, ErrNotWebRTCAside
-	}
-	_, err := t.h.NewStream(ctx, p, ProtoID)
-	if err != nil {
-		return nil, err
-	}
-	return nil, nil
+func NewWebRTCAsideTransport(h host.Host) tpt.Transport {
+	return &webRTCAsideTransport{h: h}
 }
 
-func (_ *WebRTCAsideTransport) CanDial(addr ma.Multiaddr) bool {
+func (_ *webRTCAsideTransport) CanDial(addr ma.Multiaddr) bool {
 	return mafmt.WebRTCAside.Matches(addr)
 }
 
 var ErrNotWebRTCAside = fmt.Errorf("Not WebRTCAside addr.")
 var ErrAlreadyListening = fmt.Errorf("There is already a listener listening.")
 
-func (t *WebRTCAsideTransport) Listen(laddr ma.Multiaddr) (tpt.Listener, error) {
+func (t *webRTCAsideTransport) Listen(laddr ma.Multiaddr) (tpt.Listener, error) {
 	if !t.CanDial(laddr) {
 		return nil, ErrNotWebRTCAside
 	}
@@ -59,7 +50,7 @@ func (t *WebRTCAsideTransport) Listen(laddr ma.Multiaddr) (tpt.Listener, error) 
 		rL = &webRTCAsideListener{
 			t: t,
 			// This channel is used by Accept to get the connection produced by the handler.
-			connChan: make(chan tpt.CapableConn),
+			connChan: make(chan *webRTCAsideConn),
 			// This channel propagate the Close to all the goroutine.
 			close: make(chan struct{}),
 		}
@@ -71,10 +62,10 @@ func (t *WebRTCAsideTransport) Listen(laddr ma.Multiaddr) (tpt.Listener, error) 
 	return rL, nil
 }
 
-func (_ *WebRTCAsideTransport) Protocols() []int {
+func (_ *webRTCAsideTransport) Protocols() []int {
 	return []int{ma.P_WEBRTC_ASIDE}
 }
 
-func (_ *WebRTCAsideTransport) Proxy() bool {
+func (_ *webRTCAsideTransport) Proxy() bool {
 	return false
 }

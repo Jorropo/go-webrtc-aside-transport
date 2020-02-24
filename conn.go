@@ -1,7 +1,11 @@
 package aside
+
 // Store generic things to conn
 
 import (
+	"fmt"
+	"sync"
+
 	ma "github.com/multiformats/go-multiaddr"
 
 	ct "github.com/libp2p/go-libp2p-core/crypto"
@@ -13,8 +17,15 @@ import (
 	"github.com/pion/webrtc/v2"
 )
 
-type webRTCAsideBaseConn struct {
-	t *WebRTCAsideTransport
+type webRTCAsideConn struct {
+	t *webRTCAsideTransport
+
+	pc *webrtc.PeerConnection
+
+	connChan chan *webRTCAsideStream
+	close    chan struct{}
+	closeMU  sync.Mutex
+	closed   bool
 
 	localPeer       peer.ID
 	localPrivateKey ct.PrivKey
@@ -22,51 +33,114 @@ type webRTCAsideBaseConn struct {
 	remotePublicKey ct.PubKey
 }
 
-func (t *WebRTCAsideTransport) upgradeDataChannelConn(pc *webrtc.PeerConnection, s network.Stream) (*webRTCAsideConn, error) {
-	pc.OnDataChannel()
-	c := s.Conn()
-	return &webRTCAsideConn{
+func (t *webRTCAsideTransport) upgradeConn(pc *webrtc.PeerConnection, s network.Stream) *webRTCAsideConn {
+	sC := s.Conn()
+	c := &webRTCAsideConn{
 		t:               t,
 		pc:              pc,
-		localPeer:       c.LocalPeer(),
-		localPrivateKey: c.LocalPrivateKey(),
-		remotePeer:      c.RemotePeer(),
-		remotePublicKey: c.RemotePublicKey(),
-	}, nil
+		connChan:        make(chan *webRTCAsideStream),
+		close:           make(chan struct{}),
+		localPeer:       sC.LocalPeer(),
+		localPrivateKey: sC.LocalPrivateKey(),
+		remotePeer:      sC.RemotePeer(),
+		remotePublicKey: sC.RemotePublicKey(),
+	}
+	pc.OnDataChannel(c.handleDataChannel)
+	pc.OnConnectionStateChange(c.handleConnectionStatesChange)
+	return c
 }
 
-func (c *webRTCAsideBaseConn) handleDataChannel(d *webrtc.DataChannel) tpt.Transport {
-	c.connChan <- d.Detach
+func (c *webRTCAsideConn) handleDataChannel(d *webrtc.DataChannel) {
+	d.OnOpen(func() {
+		s, err := upgradeDataChannel(d)
+		if err != nil {
+			return
+		}
+		select {
+		case c.connChan <- s:
+		case <-c.close:
+			s.Close()
+		}
+	})
 }
 
-func (c *webRTCAsideBaseConn) Transport() tpt.Transport {
+func (c *webRTCAsideConn) handleConnectionStatesChange(state webrtc.PeerConnectionState) {
+	if state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateDisconnected {
+		c.Close()
+	}
+}
+
+func (c *webRTCAsideConn) Transport() tpt.Transport {
 	return c.t
 }
 
+var ErrConnAlreadyClosed = fmt.Errorf("The connection is already closed.")
+
+// Muxing stuff
+func (c *webRTCAsideConn) Close() error {
+	c.closeMU.Lock()
+	defer c.closeMU.Unlock()
+	if !c.closed {
+		close(c.close)
+		c.pc.Close()
+		close(c.connChan)
+		c.closed = true
+		return nil
+	}
+	return ErrConnAlreadyClosed
+}
+
+func (c *webRTCAsideConn) IsClosed() bool {
+	c.closeMU.Lock()
+	defer c.closeMU.Unlock()
+	return c.closed
+}
+
+func (c *webRTCAsideConn) OpenStream() (mux.MuxedStream, error) {
+	d, err := c.pc.CreateDataChannel("", nil)
+	if err != nil {
+		return nil, err
+	}
+	s, err := upgradeDataChannel(d)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (c *webRTCAsideConn) AcceptStream() (mux.MuxedStream, error) {
+	select {
+	case s := <-c.connChan:
+		return s, nil
+	case <-c.close:
+		return nil, ErrConnAlreadyClosed
+	}
+}
+
 // Maddr stuff
-func (_ *webRTCAsideBaseConn) LocalMultiaddr() ma.Multiaddr {
+func (_ *webRTCAsideConn) LocalMultiaddr() ma.Multiaddr {
 	return emptyWebRTCAsideMaddr
 }
 
-func (_ *webRTCAsideBaseConn) RemoteMultiaddr() ma.Multiaddr {
+func (_ *webRTCAsideConn) RemoteMultiaddr() ma.Multiaddr {
 	return emptyWebRTCAsideMaddr
 }
 
 // Security stuff
 // All the security is a crypto chain, newer webrtc keys are assumed safe
 // because they are exchanged through a safe connection.
-func (c *webRTCAsideBaseConn) LocalPeer() peer.ID {
+func (c *webRTCAsideConn) LocalPeer() peer.ID {
 	return c.localPeer
 }
 
-func (c *webRTCAsideBaseConn) LocalPrivateKey() ct.PrivKey {
+func (c *webRTCAsideConn) LocalPrivateKey() ct.PrivKey {
 	return c.localPrivateKey
 }
 
-func (c *webRTCAsideBaseConn) RemotePeer() peer.ID {
+func (c *webRTCAsideConn) RemotePeer() peer.ID {
 	return c.remotePeer
 }
 
-func (c *webRTCAsideBaseConn) RemotePublicKey() ct.PubKey {
+func (c *webRTCAsideConn) RemotePublicKey() ct.PubKey {
 	return c.remotePublicKey
 }
