@@ -255,47 +255,11 @@ func (l *webRTCAsideListener) handleIncoming(s network.Stream) {
 }
 
 var ErrTimeout = fmt.Errorf("Connection Timeout.")
-var ErrNoAsideConnAvaible = fmt.Errorf("Can't connect aside.")
 
 func (t *webRTCAsideTransport) Dial(ctx context.Context, raddr ma.Multiaddr, p peer.ID) (tpt.CapableConn, error) {
 	if !t.CanDial(raddr) {
 		return nil, ErrNotWebRTCAside
 	}
-	var err error
-	addrp := excludeWebrtcAside(t.h.Peerstore().Addrs(p))
-	// If no maddr are stored find some more.
-	if len(addrp) == 0 {
-		goto FindMoreAddr
-	}
-	err = t.h.Connect(ctx, peer.AddrInfo{
-		ID:    p,
-		Addrs: addrp,
-	})
-	// If connection is failing, find more maddr.
-	if err != nil {
-		goto FindMoreAddr
-	}
-	goto StartStreaming
-FindMoreAddr:
-	{
-		addri, err := t.r.FindPeer(ctx, p)
-		if err != nil {
-			return nil, err
-		}
-		addrp = excludeWebrtcAside(addri.Addrs)
-		fmt.Printf("Found %d maddr.\n", len(addrp))
-		if len(addrp) == 0 {
-			return nil, ErrNoAsideConnAvaible
-		}
-		err = t.h.Connect(ctx, peer.AddrInfo{
-			ID:    p,
-			Addrs: addrp,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-StartStreaming:
 	s, err := t.h.NewStream(ctx, p, ProtoID)
 	if err != nil {
 		return nil, err
@@ -484,16 +448,4 @@ StartStreaming:
 	// Finishing
 	endingBad = false
 	return t.upgradeConn(pc, s), nil
-}
-
-func excludeWebrtcAside(in []ma.Multiaddr) []ma.Multiaddr {
-	out := []ma.Multiaddr{}
-	for _, v := range in {
-		p := v.Protocols()
-		if len(p) == 0 || p[0].Code == ma.P_WEBRTC_ASIDE {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
 }
