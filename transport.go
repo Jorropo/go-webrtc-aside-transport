@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/protocol"
 	tpt "github.com/libp2p/go-libp2p-core/transport"
+	routed "github.com/libp2p/go-libp2p/p2p/host/routed"
 )
 
 var _ tpt.Transport = (*webRTCAsideTransport)(nil)
@@ -22,13 +23,33 @@ var emptyWebRTCAsideMaddr, _ = ma.NewMultiaddr("/webrtc-aside")
 type webRTCAsideTransport struct {
 	// The host is used for the aside protocol.
 	h host.Host
+	// We use routing by our self because we want to eject webrtc aside for the aside conn.
+	r routed.Routing
 
 	// doListen avoid multiple listen to be done.
 	doListen rs.Once
 }
 
-func NewWebRTCAsideTransport(h host.Host) tpt.Transport {
-	return &webRTCAsideTransport{h: h}
+func New(h host.Host, r routed.Routing) tpt.Transport {
+	return &webRTCAsideTransport{h: h, r: r}
+}
+
+func AddTransport(h host.Host, r routed.Routing) error {
+	n, ok := h.Network().(tpt.TransportNetwork)
+	if !ok {
+		return fmt.Errorf("%v is not a transport network", h.Network())
+	}
+
+	// TODO: Remove the transport if listen failed
+	err := n.AddTransport(New(h, r))
+	if err != nil {
+		return err
+	}
+	err = n.Listen(emptyWebRTCAsideMaddr)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (_ *webRTCAsideTransport) CanDial(addr ma.Multiaddr) bool {

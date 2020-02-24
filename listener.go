@@ -25,6 +25,7 @@ type webRTCAsideListener struct {
 func (l *webRTCAsideListener) Accept() (tpt.CapableConn, error) {
 	select {
 	case c := <-l.connChan:
+		fmt.Println("Accepted !")
 		return c, nil
 	case <-l.close:
 		return nil, ErrListenerAlreadyClosed
